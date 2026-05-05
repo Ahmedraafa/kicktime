@@ -1,0 +1,25 @@
+# Prevent PHP file downloads (XAMPP Windows)
+AddHandler application/x-httpd-php .php
+
+# Prevent directory listing
+Options -Indexes
+
+# Default charset
+AddDefaultCharset UTF-8
+
+# PHP settings (only if not already in main config)
+php_value default_charset "UTF-8"
+php_value display_errors "0"
+php_value log_errors "1"
+
+# Protect sensitive files from being accessed via browser
+<FilesMatch "(\.sql|\.log|\.bak|config.*|.*config)$">
+    Require all denied
+</FilesMatch>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+</IfModule>

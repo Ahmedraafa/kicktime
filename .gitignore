@@ -1,0 +1,24 @@
+# Assets and Uploads
+uploads/stadiums/*
+uploads/users/*
+!uploads/stadiums/.gitkeep
+!uploads/users/.gitkeep
+
+# IDE and OS files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+scratch/
+export_db.php
+
+# Environment (if any)
+.env
+
+# Node
+node_modules/
+package-lock.json

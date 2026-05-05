@@ -1,0 +1,554 @@
+<?php
+require_once __DIR__ . '/../backend/config/database.php';
+session_start();
+
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'owner') {
+    header("Location: " . (isset($_SERVER['HTTPS']) ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . '/index.php');
+    exit();
+}
+
+$db = Database::getInstance()->getConnection();
+$owner_id = $_SESSION['user_id'];
+
+// Fetch bookings for this owner's stadiums
+$stmt = $db->prepare("
+    SELECT b.*, u.name as user_name, u.email as user_email, s.name as stadium_name, s.location
+    FROM bookings b
+    JOIN users u ON b.user_id = u.id
+    JOIN stadiums s ON b.stadium_id = s.id
+    WHERE s.owner_id = ?
+    ORDER BY b.booking_date DESC, b.start_time DESC
+");
+$stmt->execute([$owner_id]);
+$bookings = $stmt->fetchAll();
+
+// Stats
+$statsStmt = $db->prepare("
+    SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN b.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN b.status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN b.status = 'approved' THEN b.total_price ELSE 0 END) as revenue
+    FROM bookings b
+    JOIN stadiums s ON b.stadium_id = s.id
+    WHERE s.owner_id = ?
+");
+$statsStmt->execute([$owner_id]);
+$stats = $statsStmt->fetch();
+
+$pageTitle = 'حجوزات الملاعب - صاحب الملعب';
+$hideNavbar = true;
+$pageCSS = "
+    /* === LAYOUT === */
+    .owner-layout {
+        display: flex;
+        min-height: 100vh;
+        position: relative;
+    }
+
+    /* === SIDEBAR === */
+    .owner-sidebar {
+        width: 280px;
+        flex-shrink: 0;
+        background: var(--c-surface);
+        border-left: 1px solid var(--c-border);
+        display: flex;
+        flex-direction: column;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        z-index: 1020;
+        transition: transform 0.3s ease;
+    }
+    body[dir='rtl'] .owner-sidebar {
+        border-left: none;
+        border-right: 1px solid var(--c-border);
+    }
+
+    .sidebar-brand {
+        padding: 2rem 1.5rem;
+        text-align: center;
+        border-bottom: 1px solid var(--c-border);
+    }
+    .sidebar-brand img {
+        height: 42px;
+        object-fit: contain;
+    }
+
+    .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 1.5rem 1rem;
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .sidebar-nav a {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.85rem 1.25rem;
+        border-radius: 14px;
+        color: var(--c-text-muted);
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+    }
+    .sidebar-nav a:hover {
+        background: var(--c-bg);
+        color: var(--c-primary);
+    }
+    .sidebar-nav a.active {
+        background: var(--c-primary);
+        color: white;
+        box-shadow: 0 4px 15px rgba(34, 197, 94, 0.25);
+    }
+    .sidebar-nav .nav-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+    }
+
+    .sidebar-footer {
+        padding: 1.5rem;
+        border-top: 1px solid var(--c-border);
+        text-align: center;
+    }
+    .sidebar-footer .user-name {
+        display: block;
+        font-weight: 900;
+        font-size: 0.95rem;
+        margin-bottom: 2px;
+        color: var(--c-text-main);
+    }
+    .sidebar-footer .user-email {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--c-text-muted);
+        margin-bottom: 1rem;
+    }
+    .sidebar-footer a {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.6rem;
+        border-radius: 10px;
+        color: var(--c-danger);
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 0.9rem;
+        transition: background 0.2s ease;
+    }
+    .sidebar-footer a:hover {
+        background: rgba(239, 68, 68, 0.08);
+    }
+
+    /* === MAIN CONTENT === */
+    .owner-main {
+        flex: 1;
+        min-width: 0;
+        padding: 2.5rem;
+        max-width: 1400px;
+    }
+
+    .owner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 3rem;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    .owner-header h1 {
+        font-size: 2rem;
+        font-weight: 900;
+        margin: 0 0 4px;
+    }
+    .owner-header p {
+        font-size: 0.9rem;
+        color: var(--c-text-muted);
+        margin: 0;
+    }
+
+    /* === STATS === */
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 3rem;
+    }
+    .stat-card {
+        background: var(--c-surface);
+        padding: 1.75rem 2rem;
+        border-radius: 20px;
+        border: 1px solid var(--c-border);
+        box-shadow: var(--shadow-pro);
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        transition: transform 0.3s ease;
+    }
+    .stat-card:hover {
+        transform: translateY(-6px);
+    }
+    .stat-visual {
+        width: 60px;
+        height: 60px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .stat-value {
+        font-size: 1.85rem;
+        font-weight: 900;
+        line-height: 1.1;
+        margin-bottom: 4px;
+    }
+    .stat-label {
+        font-size: 0.85rem;
+        color: var(--c-text-muted);
+        font-weight: 700;
+    }
+
+    /* === TABLE === */
+    .table-card {
+        background: var(--c-surface);
+        border-radius: 24px;
+        border: 1px solid var(--c-border);
+        box-shadow: var(--shadow-pro);
+        overflow: hidden;
+    }
+    .table-header {
+        padding: 1.5rem 2rem;
+        border-bottom: 1px solid var(--c-border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .table-header h3 {
+        font-size: 1.25rem;
+        font-weight: 900;
+        margin: 0;
+    }
+    .table-scroll {
+        max-height: 600px;
+        overflow: auto;
+    }
+    .pro-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 800px;
+    }
+    .pro-table th {
+        text-align: start;
+        padding: 1.25rem 2rem;
+        background: var(--c-bg);
+        color: var(--c-text-muted);
+        font-size: 0.75rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+    .pro-table td {
+        padding: 1.5rem 2rem;
+        border-bottom: 1px solid var(--c-border);
+        font-size: 0.95rem;
+    }
+    .pro-table tr:hover td {
+        background: var(--c-bg);
+    }
+
+    /* === BADGES === */
+    .badge {
+        display: inline-block;
+        padding: 0.35rem 0.85rem;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+    .badge-pending {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    .badge-approved {
+        background: #d1fae5;
+        color: #065f46;
+    }
+    .badge-rejected {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    /* === EMPTY STATE === */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: var(--c-text-muted);
+    }
+    .empty-state svg {
+        display: block;
+        margin: 0 auto 1rem;
+        opacity: 0.4;
+    }
+    .empty-state p {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 1.5rem;
+    }
+
+    /* === MOBILE === */
+    .mobile-menu-btn {
+        display: none;
+        background: none;
+        border: 2px solid var(--c-border);
+        border-radius: 12px;
+        padding: 0.5rem;
+        cursor: pointer;
+        color: var(--c-text-main);
+    }
+    .owner-header .mobile-menu-btn {
+        position: fixed;
+        top: 70px;
+        z-index: 1025;
+    }
+    body[dir='ltr'] .owner-header .mobile-menu-btn {
+        left: 16px;
+    }
+    body[dir='rtl'] .owner-header .mobile-menu-btn {
+        right: 16px;
+    }
+
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 1015;
+    }
+    .owner-sidebar.active ~ .sidebar-overlay {
+        display: block;
+    }
+
+    /* === RESPONSIVE === */
+    @media (max-width: 1024px) {
+        .owner-layout {
+            flex-direction: column;
+        }
+        .owner-sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            transform: translateX(-100%);
+            width: 280px;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+        }
+        body[dir='rtl'] .owner-sidebar {
+            left: auto;
+            right: 0;
+            transform: translateX(100%);
+        }
+        .owner-sidebar.active {
+            transform: translateX(0) !important;
+        }
+        .owner-main {
+            padding: 1.5rem;
+            width: 100%;
+        }
+        .mobile-menu-btn {
+            display: block !important;
+        }
+        .stat-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    @media (max-width: 640px) {
+        .owner-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+";
+include __DIR__ . '/../frontend/includes/header.php';
+?>
+
+    <div class="owner-layout">
+        <!-- Mobile Menu Button -->
+        <button class="mobile-menu-btn" onclick="document.querySelector('.owner-sidebar').classList.toggle('active')">
+            <i class="fa-solid fa-bars" style="font-size: 20px;"></i>
+        </button>
+
+        <!-- Sidebar -->
+        <aside class="owner-sidebar">
+            <div class="sidebar-brand">
+                <img src="<?= $root ?>assets/images/ICON.png" alt="KickTime">
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="dashboard.php" class="nav-item">
+                    <span class="nav-icon">
+                        <i class="fa-solid fa-gauge-high" style="font-size: 18px;"></i>
+                    </span>
+                    <span>لوحة التحكم</span>
+                </a>
+                <a href="stadiums.php" class="nav-item">
+                    <span class="nav-icon">
+                        <i class="fa-solid fa-futbol" style="font-size: 18px;"></i>
+                    </span>
+                    <span>ملاعبي</span>
+                </a>
+                <a href="bookings.php" class="nav-item active">
+                    <span class="nav-icon">
+                        <i class="fa-solid fa-calendar-check" style="font-size: 18px;"></i>
+                    </span>
+                    <span>حجوزات الملاعب</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <span class="user-name"><?php echo htmlspecialchars($_SESSION['name']); ?></span>
+                <span class="user-email"><?php echo $_SESSION['email']; ?></span>
+                <a href="<?= $root ?>auth/logout.php" onclick="event.preventDefault(); localStorage.removeItem('user'); location.href='<?= $root ?>auth/logout.php';">
+                    <i class="fa-solid fa-right-from-bracket" style="font-size: 16px;"></i>
+                    <span>تسجيل الخروج</span>
+                </a>
+            </div>
+        </aside>
+
+        <div class="sidebar-overlay" onclick="document.querySelector('.owner-sidebar').classList.remove('active')"></div>
+
+        <!-- Main Content -->
+        <main class="owner-main">
+            <div class="owner-header">
+                <div>
+                    <h1>حجوزات الملاعب</h1>
+                    <p>إدارة حجوزات ملاعبك</p>
+                </div>
+                <span style="font-size: 0.85rem; color: var(--c-text-muted); font-weight: 700;">
+                    <?php echo count($bookings); ?> حجز
+                </span>
+            </div>
+
+            <!-- Stats -->
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-visual" style="background: rgba(34, 197, 94, 0.1); color: var(--c-primary);">
+                        <i class="fa-solid fa-calendar-check" style="font-size: 20px;"></i>
+                    </div>
+                    <div>
+                        <div class="stat-value"><?php echo $stats['total']; ?></div>
+                        <div class="stat-label">إجمالي الحجوزات</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-visual" style="background: rgba(234, 179, 8, 0.1); color: #eab308;">
+                        <i class="fa-solid fa-clock" style="font-size: 20px;"></i>
+                    </div>
+                    <div>
+                        <div class="stat-value"><?php echo $stats['pending']; ?></div>
+                        <div class="stat-label">بانتظار الموافقة</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-visual" style="background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
+                        <i class="fa-solid fa-check" style="font-size: 20px;"></i>
+                    </div>
+                    <div>
+                        <div class="stat-value"><?php echo $stats['approved']; ?></div>
+                        <div class="stat-label">موافق عليها</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-visual" style="background: rgba(168, 85, 247, 0.1); color: #a855f7;">
+                        <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <line x1="12" y1="1" x2="12" y2="23"/>
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 1 1 0 7H6"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="stat-value"><?php echo number_format($stats['revenue'], 0); ?> ج.م</div>
+                        <div class="stat-label">إجمالي الإيرادات</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bookings Table -->
+            <div class="table-card">
+                <div class="table-header">
+                    <h3>جميع الحجوزات</h3>
+                </div>
+                <div class="table-scroll">
+                    <table class="pro-table">
+                        <thead>
+                            <tr>
+                                <th>رقم الحجز</th>
+                                <th>اللاعب</th>
+                                <th>الملعب</th>
+                                <th>الموقع</th>
+                                <th>التاريخ</th>
+                                <th>الوقت</th>
+                                <th>المدة</th>
+                                <th>السعر</th>
+                                <th>الحالة</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($bookings as $booking): ?>
+                            <tr>
+                                <td style="font-weight: 700; color: var(--c-primary);">#<?php echo $booking['id']; ?></td>
+                                <td>
+                                    <div style="font-weight: 700;"><?php echo htmlspecialchars($booking['user_name']); ?></div>
+                                    <div style="font-size: 0.8rem; color: var(--c-text-muted);"><?php echo htmlspecialchars($booking['user_email']); ?></div>
+                                </td>
+                                <td style="font-weight: 700;"><?php echo htmlspecialchars($booking['stadium_name']); ?></td>
+                                <td style="color: var(--c-text-muted); font-size: 0.9rem;">
+                                    <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24" style="display:inline; vertical-align: middle; margin-inline-end: 4px;">
+                                        <i class="fa-solid fa-location-dot" style="font-size: 12px; margin-inline-end: 4px;"></i>
+                                    </svg>
+                                    <?php echo htmlspecialchars($booking['location']); ?>
+                                </td>
+                                <td><?php echo date('Y/m/d', strtotime($booking['booking_date'])); ?></td>
+                                <td><?php echo substr($booking['start_time'], 0, 5) . ' - ' . substr($booking['end_time'], 0, 5); ?></td>
+                                <td><?php echo $booking['hours']; ?> ساعة</td>
+                                <td style="font-weight: 900; color: var(--c-primary);"><?php echo $booking['total_price']; ?> ج.م</td>
+                                <td>
+                                    <?php
+                                    $badgeClass = $booking['status'] == 'pending' ? 'pending' : ($booking['status'] == 'approved' ? 'approved' : 'rejected');
+                                    $badgeText = $booking['status'] == 'pending' ? 'بانتظار الموافقة' : ($booking['status'] == 'approved' ? 'موافق' : 'مرفوض');
+                                    ?>
+                                    <span class="badge badge-<?php echo $badgeClass; ?>"><?php echo $badgeText; ?></span>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                            <?php if (empty($bookings)): ?>
+                            <tr>
+                                <td colspan="9">
+                                    <div class="empty-state">
+                                        <svg width="64" height="64" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
+                                            <rect x="2" y="3" width="20" height="18" rx="2"/>
+                                            <line x1="2" y1="9" x2="22" y2="9"/>
+                                            <line x1="9" y1="3" x2="9" y2="9"/>
+                                        </svg>
+                                        <p>لا توجد حجوزات بعد</p>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<?php include __DIR__ . '/../frontend/includes/footer.php'; ?>
