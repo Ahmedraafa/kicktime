@@ -1,5 +1,8 @@
 # KickTime - Sports Booking System
 
+<img width="890" height="280" alt="logo" src="https://github.com/user-attachments/assets/fb7fd9f9-c28d-4f36-9843-8344d5e48b68" />
+
+
 A modern and premium sports stadium booking platform built with PHP and MySQL. Features an advanced administrative dashboard, community matches, and a seamless booking experience.
 
 ## Features
